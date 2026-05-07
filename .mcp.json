@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "postman": {
+      "command": "npx",
+      "args": ["@postman/postman-mcp-server@latest", "--full"]
+    }
+  }
+}
