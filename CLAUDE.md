@@ -47,6 +47,10 @@ Mock response (fixed, no real logic):
     "rounds": 3
   }
 
+in the prod environment add a new variable "mock_url", and put the mock url in it. Then use it in the /post
+
+Verify that the POST /battle endpoint has a saved example with a valid response body and that the mock server is correctly linked to that collection.
+
 ## Out of scope
 - Battle calculation logic — this will be coded later
 - Authentication — PokéAPI is public, no auth needed
