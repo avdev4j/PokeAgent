@@ -87,21 +87,45 @@ A Pokémon caught by a specific user.
 Response 200:
 ```json
 [
-  { "id": "user_001", "name": "Lucas", "avatar": "pikachu", "created_at": "2025-01-15T10:00:00Z" },
-  { "id": "user_002", "name": "Emma",  "avatar": "eevee",   "created_at": "2025-01-20T09:00:00Z" }
+  { "id": "user_001", "name": "Lucas",  "avatar": "pikachu",    "created_at": "2025-01-15T10:00:00Z" },
+  { "id": "user_002", "name": "Jules",  "avatar": "charmander", "created_at": "2025-01-18T11:00:00Z" },
+  { "id": "user_003", "name": "Mathys", "avatar": "bulbasaur",  "created_at": "2025-01-20T09:00:00Z" },
+  { "id": "user_004", "name": "Alba",   "avatar": "eevee",      "created_at": "2025-01-22T14:00:00Z" }
 ]
 ```
 
 **`GET /users/{user_id}/pokedex`** — List Pokémon caught by a user
-Response 200:
+The mock should return a different Pokédex for each user. Some overlap between
+users is fine, but each kid should have their own distinct collection.
+
+Suggested mock data per user:
+
+- **Lucas (user_001)** — electric & fast types
+  - pikachu (id 25, lvl 12, "Sparky"), jolteon (id 135, lvl 18, "Volt"),
+    raichu (id 26, lvl 22, "Thunder"), zapdos (id 145, lvl 30, "Storm")
+
+- **Jules (user_002)** — fire types
+  - charmander (id 4, lvl 8, "Blaze"), charizard (id 6, lvl 25, "Inferno"),
+    arcanine (id 59, lvl 20, "Ash"), magmar (id 126, lvl 16, "Ember")
+
+- **Mathys (user_003)** — grass & nature types
+  - bulbasaur (id 1, lvl 10, "Leafy"), venusaur (id 3, lvl 28, "Bloom"),
+    snorlax (id 143, lvl 24, "Big Guy"), pikachu (id 25, lvl 9, "Buddy")
+
+- **Alba (user_004)** — cute & psychic types
+  - eevee (id 133, lvl 14, "Fluff"), mew (id 151, lvl 20, "Sparkle"),
+    jigglypuff (id 39, lvl 11, "Lullaby"), espeon (id 196, lvl 19, "Stardust")
+
+Response 200 example for Lucas:
 ```json
 {
   "user_id": "user_001",
-  "total_caught": 3,
+  "total_caught": 4,
   "pokemons": [
-    { "id": "catch_42", "user_id": "user_001", "pokemon_name": "pikachu",   "pokemon_id": 25,  "caught_at": "2025-03-10T14:30:00Z", "nickname": "Sparky",  "level": 12 },
-    { "id": "catch_43", "user_id": "user_001", "pokemon_name": "bulbasaur", "pokemon_id": 1,   "caught_at": "2025-03-12T16:00:00Z", "nickname": "Leafy",   "level": 8  },
-    { "id": "catch_44", "user_id": "user_001", "pokemon_name": "charmander","pokemon_id": 4,   "caught_at": "2025-03-15T11:15:00Z", "nickname": "Blaze",   "level": 15 }
+    { "id": "catch_101", "user_id": "user_001", "pokemon_name": "pikachu",  "pokemon_id": 25,  "caught_at": "2025-03-10T14:30:00Z", "nickname": "Sparky",  "level": 12 },
+    { "id": "catch_102", "user_id": "user_001", "pokemon_name": "jolteon",  "pokemon_id": 135, "caught_at": "2025-03-12T16:00:00Z", "nickname": "Volt",    "level": 18 },
+    { "id": "catch_103", "user_id": "user_001", "pokemon_name": "raichu",   "pokemon_id": 26,  "caught_at": "2025-03-14T11:00:00Z", "nickname": "Thunder", "level": 22 },
+    { "id": "catch_104", "user_id": "user_001", "pokemon_name": "zapdos",   "pokemon_id": 145, "caught_at": "2025-03-18T09:30:00Z", "nickname": "Storm",   "level": 30 }
   ]
 }
 ```
@@ -155,20 +179,33 @@ A single-page web app (HTML + Tailwind + vanilla JS or React) that consumes
 **Pokédex screen — User's collection**
 - Calls `GET {mock}/users/{user_id}/pokedex` — gets the user's caught Pokémon
 - Each Pokémon is shown as a card with: sprite, name, nickname, level, caught date
-- Sprites are rendered from PokéAPI's CDN (URLs are in the mock's response, OR
-  built client-side from `pokemon_id` using PokéAPI's sprite URL pattern)
-- Each card has a **"More…"** button
-- A "Catch new Pokémon" button opens a form that POSTs to the mock
-- A "Release" button on each card calls DELETE on the mock
+- Sprites are rendered from PokéAPI's CDN, built client-side from `pokemon_id`:
+  `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{id}.png`
+- Each card has a **"Details"** button that opens the Pokémon detail modal
+- A **"Catch a new Pokémon"** button opens the catch form
+- A **"Release"** button on each card calls DELETE on the mock (with confirmation)
 
-**Pokémon detail modal/page — when "More…" is clicked**
+**Catch form — adding a new Pokémon**
+- The user must NOT type the Pokémon name freely — they pick from a list
+- Provide a **searchable autocomplete input** powered by PokéAPI:
+  - On focus or first keystroke, fetch `GET https://pokeapi.co/api/v2/pokemon?limit=151`
+    (the original 151 Pokémon — keep it manageable for kids)
+  - Cache the result client-side so we don't refetch on every keystroke
+  - Filter the list as the user types (substring match, case-insensitive)
+  - Show a dropdown with up to 8 suggestions, each with the Pokémon sprite + name
+  - On selection, the form auto-fills the name and shows a preview sprite
+- Additional fields the user fills in: nickname (optional, free text), level (1-100, default 5)
+- On submit: POST to `{mock}/users/{user_id}/pokedex` with the chosen Pokémon's name and metadata
+
+**Pokémon detail modal — when "Details" is clicked**
 - Calls `GET https://pokeapi.co/api/v2/pokemon/{name}` — full Pokémon data
 - Calls `GET https://pokeapi.co/api/v2/pokemon-species/{name}` — flavor text /
-  description in plain English
-- Displays: full stats (HP, Attack, Defense, Speed…), types with colored badges,
-  abilities, height, weight, and the description text
+  description in plain English (use the first English entry in `flavor_text_entries`)
+- Displays: large sprite, full stats (HP, Attack, Defense, Sp. Atk, Sp. Def, Speed)
+  shown as horizontal bars, types with colored badges, abilities, height, weight,
+  and the description text
 - Loading state while PokéAPI responds
-- Error state if PokéAPI is unreachable
+- Error state if PokéAPI is unreachable (with a "Retry" button)
 
 ### Design requirements
 - Clean, modern, kid-friendly UI — Pokémon-themed but not childish
