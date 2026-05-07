@@ -25,11 +25,14 @@ Endpoints to create:
 - GET /type/{name}           → Type damage relations (example: electric)
 - GET /move/{name}           → Move power, accuracy, damage class (example: thunderbolt)
 
+## Phase 2 — Add an environment and tests
+Add a 'prod' environment with base_url = https://pokeapi.co/api/v2. Write Postman tests on each request that verify status 200 and that the response contains a 'name' field.
+
 Tests on every request:
 - Status code is 200
 - Response body contains a "name" field
 
-## Phase 2 — Battle API contract (mock only)
+## Phase 3 — Battle API contract (mock only)
 POST /battle
 Request body:
   { "pokemon1": "pikachu", "pokemon2": "charmander" }
