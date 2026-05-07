@@ -1,7 +1,5 @@
 # PokéAgent — Pokémon Battle Simulator
 
-At the start of every session, read the `.env` file to understand available environment variables.
-
 ## Project context
 I'm building a Pokémon battle simulator for my kids.
 This project follows an API-first design approach.
