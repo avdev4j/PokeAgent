@@ -1,0 +1,215 @@
+openapi: 3.0.0
+info:
+  title: PokéDex API
+  version: 1.0.0
+  description: >-
+    Our own API contract for user-specific Pokédex data. All responses are
+    mocked — backend not yet implemented.
+servers:
+  - url: 'https://7fe1f3ee-5f82-479f-ac99-aa1d0053ba8d.mock.pstmn.io'
+    description: PokéDex Mock Server (Postman)
+
+paths:
+  /users:
+    get:
+      summary: List Users
+      description: >-
+        GET /users — returns the full list of users with their id, name, avatar,
+        and created_at.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+              example:
+                - id: user_001
+                  name: Lucas
+                  avatar: pikachu
+                  created_at: '2025-01-15T10:00:00Z'
+                - id: user_002
+                  name: Emma
+                  avatar: eevee
+                  created_at: '2025-01-20T09:00:00Z'
+
+  /users/{user_id}/pokedex:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The unique ID of the user (e.g. user_001)
+
+    get:
+      summary: Get Pokédex
+      description: >-
+        GET /users/{user_id}/pokedex — returns total caught count and list of
+        CaughtPokemon records for the given user.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pokedex'
+              example:
+                user_id: user_001
+                total_caught: 3
+                pokemons:
+                  - id: catch_42
+                    user_id: user_001
+                    pokemon_name: pikachu
+                    pokemon_id: 25
+                    caught_at: '2025-03-10T14:30:00Z'
+                    nickname: Sparky
+                    level: 12
+                  - id: catch_43
+                    user_id: user_001
+                    pokemon_name: bulbasaur
+                    pokemon_id: 1
+                    caught_at: '2025-03-12T16:00:00Z'
+                    nickname: Leafy
+                    level: 8
+                  - id: catch_44
+                    user_id: user_001
+                    pokemon_name: charmander
+                    pokemon_id: 4
+                    caught_at: '2025-03-15T11:15:00Z'
+                    nickname: Blaze
+                    level: 15
+
+    post:
+      summary: Catch a Pokémon
+      description: >-
+        POST /users/{user_id}/pokedex — records a newly caught Pokémon and
+        returns the created CaughtPokemon record.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CatchRequest'
+            example:
+              pokemon_name: squirtle
+              nickname: Bubbles
+              level: 5
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaughtPokemon'
+              example:
+                id: catch_45
+                user_id: user_001
+                pokemon_name: squirtle
+                pokemon_id: 7
+                caught_at: '2025-03-20T10:00:00Z'
+                nickname: Bubbles
+                level: 5
+
+  /users/{user_id}/pokedex/{catch_id}:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The unique ID of the user (e.g. user_001)
+      - name: catch_id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The unique ID of the caught Pokémon record (e.g. catch_42)
+
+    delete:
+      summary: Release a Pokémon
+      description: >-
+        DELETE /users/{user_id}/pokedex/{catch_id} — releases the Pokémon,
+        removing it from the user's Pokédex. Returns 204 with no body.
+      responses:
+        '204':
+          description: No Content
+
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name, avatar, created_at]
+      properties:
+        id:
+          type: string
+          example: user_001
+        name:
+          type: string
+          example: Lucas
+        avatar:
+          type: string
+          description: Pokémon name used as the user's avatar
+          example: pikachu
+        created_at:
+          type: string
+          format: date-time
+          example: '2025-01-15T10:00:00Z'
+
+    CaughtPokemon:
+      type: object
+      required: [id, user_id, pokemon_name, pokemon_id, caught_at, level]
+      properties:
+        id:
+          type: string
+          example: catch_42
+        user_id:
+          type: string
+          example: user_001
+        pokemon_name:
+          type: string
+          example: pikachu
+        pokemon_id:
+          type: integer
+          example: 25
+        caught_at:
+          type: string
+          format: date-time
+          example: '2025-03-10T14:30:00Z'
+        nickname:
+          type: string
+          example: Sparky
+        level:
+          type: integer
+          example: 12
+
+    Pokedex:
+      type: object
+      required: [user_id, total_caught, pokemons]
+      properties:
+        user_id:
+          type: string
+          example: user_001
+        total_caught:
+          type: integer
+          example: 3
+        pokemons:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaughtPokemon'
+
+    CatchRequest:
+      type: object
+      required: [pokemon_name, level]
+      properties:
+        pokemon_name:
+          type: string
+          example: squirtle
+        nickname:
+          type: string
+          example: Bubbles
+        level:
+          type: integer
+          example: 5

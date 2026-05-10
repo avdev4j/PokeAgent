@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PokéDex</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          keyframes: {
+            fadeUp:  { '0%': { opacity:0, transform:'translateY(10px)' }, '100%': { opacity:1, transform:'translateY(0)' } },
+            scaleIn: { '0%': { opacity:0, transform:'scale(0.95)' },      '100%': { opacity:1, transform:'scale(1)' } },
+          },
+          animation: {
+            'fade-up':  'fadeUp 0.3s ease-out both',
+            'scale-in': 'scaleIn 0.25s ease-out both',
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; }
+    .card { transition: transform .2s ease, box-shadow .2s ease; }
+    .card:hover { transform: translateY(-4px); box-shadow: 0 24px 48px -8px rgba(0,0,0,.55); }
+    input:focus { box-shadow: 0 0 0 3px rgba(239,68,68,.2); }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 99px; }
+    .stat-bar { transition: width 0.7s cubic-bezier(.4,0,.2,1); }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-50 min-h-screen antialiased">
+<div id="app"></div>
+<script>
+/* ─── Constants ─────────────────────────────────────────────────────────── */
+const MOCK    = 'https://7fe1f3ee-5f82-479f-ac99-aa1d0053ba8d.mock.pstmn.io';
+const POKEAPI = 'https://pokeapi.co/api/v2';
+
+// Sprite CDN helpers — no PokéAPI calls, just CDN URLs derived from pokemon_id
+const spriteUrl  = id => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`;
+const artworkUrl = id => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
+
+// Canonical Pokémon type colours
+const TYPE_CLR = {
+  normal:'#9CA3AF',  fire:'#F97316',    water:'#3B82F6',  electric:'#EAB308',
+  grass:'#22C55E',   ice:'#67E8F9',     fighting:'#DC2626',poison:'#A855F7',
+  ground:'#D97706',  flying:'#818CF8',  psychic:'#EC4899', bug:'#84CC16',
+  rock:'#B45309',    ghost:'#6D28D9',   dragon:'#4F46E5',  dark:'#374151',
+  steel:'#94A3B8',   fairy:'#F472B6',
+};
+
+const STAT_META = {
+  hp:               { label:'HP',  color:'#ef4444' },
+  attack:           { label:'Atk', color:'#f97316' },
+  defense:          { label:'Def', color:'#eab308' },
+  'special-attack': { label:'SpA', color:'#3b82f6' },
+  'special-defense':{ label:'SpD', color:'#22c55e' },
+  speed:            { label:'Spe', color:'#a855f7' },
+};
+
+// Small fallback id-map for the 4 avatar names used in our mock data
+const AVATAR_IDS = { pikachu:25, charmander:4, bulbasaur:1, eevee:133 };
+
+/* ─── State ─────────────────────────────────────────────────────────────── */
+let S = {
+  view: 'home',              // 'home' | 'pokedex'
+  users: [], user: null, dex: null,
+  loading: false, error: null,
+
+  modal: null,               // null | 'catch' | 'detail' | 'release'
+
+  // detail modal
+  detailCatch: null, detailData: null, detailSpecies: null,
+  detailLoading: false, detailError: null,
+
+  // release confirmation
+  releaseTarget: null, releasing: false,
+
+  // catch form
+  catching: false,
+};
+
+// Autocomplete state lives outside S so it survives re-renders
+let pokemonCache = null;     // [{name, id}] — 151 Pokémon, fetched once
+let catchSelected = null;    // {name, id} — currently chosen Pokémon in catch form
+
+function set(patch) { S = {...S, ...patch}; render(); }
+
+/* ─── API helpers ───────────────────────────────────────────────────────── */
+async function mockReq(path, opts = {}) {
+  const r = await fetch(MOCK + path, { headers: {'Content-Type':'application/json'}, ...opts });
+  if (!r.ok && r.status !== 204) throw new Error(`HTTP ${r.status}`);
+  return r.status === 204 ? null : r.json();
+}
+
+async function pokeReq(path) {
+  const r = await fetch(POKEAPI + path);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+/* ─── Business logic ────────────────────────────────────────────────────── */
+async function loadUsers() {
+  set({ loading: true, error: null });
+  try   { set({ users: await mockReq('/users'), loading: false }); }
+  catch (e) { set({ loading: false, error: 'Could not load trainers — ' + e.message }); }
+}
+
+async function loadDex(user) {
+  set({ loading: true, error: null, user, dex: null, view: 'pokedex' });
+  try   { set({ dex: await mockReq(`/users/${user.id}/pokedex`), loading: false }); }
+  catch (e) { set({ loading: false, error: 'Could not load Pokédex — ' + e.message }); }
+}
+
+async function loadDetail(caught) {
+  set({ modal:'detail', detailCatch: caught, detailLoading: true,
+        detailData: null, detailSpecies: null, detailError: null });
+  try {
+    const [data, species] = await Promise.all([
+      pokeReq(`/pokemon/${caught.pokemon_name}`),
+      pokeReq(`/pokemon-species/${caught.pokemon_name}`),
+    ]);
+    set({ detailData: data, detailSpecies: species, detailLoading: false });
+  } catch (e) {
+    set({ detailLoading: false, detailError: 'PokéAPI unreachable — ' + e.message });
+  }
+}
+
+async function doCatch({ pokemon_name, nickname, level }) {
+  set({ catching: true, error: null });
+  try {
+    await mockReq(`/users/${S.user.id}/pokedex`, {
+      method: 'POST',
+      body: JSON.stringify({ pokemon_name, nickname: nickname || undefined, level: +level }),
+    });
+    const dex = await mockReq(`/users/${S.user.id}/pokedex`);
+    catchSelected = null;
+    set({ dex, catching: false, modal: null });
+  } catch (e) {
+    set({ catching: false, error: 'Could not catch Pokémon — ' + e.message });
+  }
+}
+
+async function doRelease(catchId) {
+  set({ releasing: true });
+  try {
+    await mockReq(`/users/${S.user.id}/pokedex/${catchId}`, { method: 'DELETE' });
+    const pokemons = S.dex.pokemons.filter(p => p.id !== catchId);
+    set({ dex: { ...S.dex, total_caught: pokemons.length, pokemons },
+          releasing: false, modal: null, releaseTarget: null });
+  } catch (e) {
+    set({ releasing: false, error: 'Could not release Pokémon — ' + e.message });
+  }
+}
+
+/* ─── Autocomplete ──────────────────────────────────────────────────────── */
+async function ensureCache() {
+  if (pokemonCache) return;
+  const r = await fetch(`${POKEAPI}/pokemon?limit=151`);
+  const d = await r.json();
+  pokemonCache = d.results.map(p => ({
+    name: p.name,
+    id:   parseInt(p.url.split('/').filter(Boolean).pop()),
+  }));
+}
+
+// Called by oninput on the search field — updates dropdown in-place, no re-render
+window.handleSearch = async function(q) {
+  await ensureCache();
+  const dropdown = document.getElementById('search-dropdown');
+  if (!dropdown) return;
+  const trimmed = q.trim().toLowerCase();
+  if (!trimmed) { dropdown.innerHTML = ''; dropdown.classList.add('hidden'); return; }
+
+  const matches = pokemonCache.filter(p => p.name.includes(trimmed)).slice(0, 8);
+  if (!matches.length) {
+    dropdown.innerHTML = `<div class="px-4 py-3 text-slate-500 text-sm">No Pokémon found</div>`;
+  } else {
+    dropdown.innerHTML = matches.map(p => `
+      <button type="button" onclick="selectPokemon('${p.name}',${p.id})"
+        class="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-700 transition-colors text-left">
+        <img src="${spriteUrl(p.id)}" class="w-9 h-9 object-contain" />
+        <span class="capitalize text-sm font-semibold">${p.name}</span>
+      </button>`).join('');
+  }
+  dropdown.classList.remove('hidden');
+};
+
+// Called by onclick on a dropdown suggestion — updates preview in-place
+window.selectPokemon = function(name, id) {
+  catchSelected = { name, id };
+  const input = document.getElementById('catch-search');
+  if (input) input.value = name;
+  const dropdown = document.getElementById('search-dropdown');
+  if (dropdown) { dropdown.innerHTML = ''; dropdown.classList.add('hidden'); }
+  const preview = document.getElementById('catch-preview');
+  if (preview) {
+    preview.innerHTML = `
+      <img src="${artworkUrl(id)}" class="w-28 h-28 object-contain drop-shadow-2xl mx-auto"
+        onerror="this.src='${spriteUrl(id)}'" />
+      <p class="text-center text-xs font-bold capitalize mt-2 text-slate-300">${name}</p>`;
+    preview.classList.remove('hidden');
+  }
+};
+
+/* ─── Tiny helpers ──────────────────────────────────────────────────────── */
+const pad3    = n   => String(n).padStart(3, '0');
+const fmtDate = iso => new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+const avatarId= name=> (pokemonCache?.find(p => p.name === name?.toLowerCase())?.id) ?? AVATAR_IDS[name?.toLowerCase()] ?? 25;
+
+function typeBadge(type) {
+  return `<span class="text-white text-xs font-bold px-2.5 py-0.5 rounded-full capitalize shadow-sm"
+    style="background:${TYPE_CLR[type] ?? '#6B7280'}">${type}</span>`;
+}
+
+function statBar(statName, value) {
+  const m = STAT_META[statName] ?? { label: statName, color: '#6b7280' };
+  const pct = Math.round((value / 255) * 100);
+  return `
+    <div class="flex items-center gap-3">
+      <span class="text-slate-500 text-xs font-bold w-8 shrink-0 text-right">${m.label}</span>
+      <div class="flex-1 bg-slate-700/70 rounded-full h-1.5 overflow-hidden">
+        <div class="h-full rounded-full stat-bar" style="width:0;background:${m.color}" data-w="${pct}"></div>
+      </div>
+      <span class="text-xs font-bold w-7 text-right tabular-nums">${value}</span>
+    </div>`;
+}
+
+function safeJson(obj) {
+  return JSON.stringify(obj).replace(/'/g, '&#39;');
+}
+
+/* ─── Templates ─────────────────────────────────────────────────────────── */
+
+function tSpinner(msg = 'Loading…') {
+  return `<div class="flex flex-col items-center justify-center py-28 gap-4 text-slate-500">
+    <svg class="w-10 h-10 text-red-500 animate-spin" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" stroke-dasharray="56" stroke-dashoffset="40"/>
+    </svg>
+    <p class="text-sm">${msg}</p>
+  </div>`;
+}
+
+function tHeader() {
+  const back = S.view === 'pokedex';
+  return `
+  <header class="sticky top-0 z-20 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md">
+    <div class="max-w-5xl mx-auto px-4 h-16 flex items-center gap-3">
+      ${back ? `<button data-action="back"
+          class="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors -ml-1">
+          <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" viewBox="0 0 24 24">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>` : ''}
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-full bg-red-500 shadow-lg shadow-red-500/30 flex items-center justify-center">
+          <svg width="16" height="16" fill="none" stroke="white" stroke-width="2.5" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/>
+            <circle cx="12" cy="12" r="3" fill="white" stroke="none"/>
+          </svg>
+        </div>
+        <span class="text-lg font-black tracking-tight">Poké<span class="text-red-400">Dex</span></span>
+      </div>
+      ${back && S.user ? `
+        <div class="ml-auto flex items-center gap-2 text-slate-400 text-sm">
+          <img src="${spriteUrl(avatarId(S.user.avatar))}" class="w-7 h-7 object-contain" alt="" />
+          <span class="font-medium">${S.user.name}</span>
+        </div>` : ''}
+    </div>
+  </header>`;
+}
+
+function tError() {
+  if (!S.error) return '';
+  return `
+  <div class="mb-5 flex items-center gap-3 bg-red-950/50 border border-red-800/50 text-red-300
+              rounded-xl px-4 py-3 text-sm animate-fade-up">
+    <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" class="shrink-0">
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+    </svg>
+    <span class="flex-1">${S.error}</span>
+    <button data-action="dismiss-error" class="hover:text-white shrink-0 transition-colors">✕</button>
+  </div>`;
+}
+
+/* ── Home ─────────────────────────────────────────────────────────────── */
+function tHome() {
+  if (S.loading) return tSpinner('Finding trainers…');
+  if (!S.users.length) return `
+    <div class="text-center py-24 text-slate-500">
+      <p class="text-6xl mb-4">🎮</p>
+      <p class="font-semibold">No trainers found.</p>
+      <p class="text-sm mt-1">Check your mock server connection.</p>
+    </div>`;
+  return `
+    <div class="mb-8 animate-fade-up">
+      <h1 class="text-3xl font-black tracking-tight">Choose your trainer</h1>
+      <p class="text-slate-400 text-sm mt-1">Select a profile to open your Pokémon collection.</p>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      ${S.users.map((u, i) => `
+        <button data-action="select-user" data-uid="${u.id}"
+          class="card group bg-slate-800 border border-slate-700/80 rounded-2xl p-6 text-center
+                 hover:border-red-500/50 cursor-pointer animate-fade-up"
+          style="animation-delay:${i * 60}ms">
+          <div class="w-24 h-24 mx-auto mb-3 rounded-full bg-slate-700/60 group-hover:bg-red-900/20
+                      flex items-center justify-center transition-colors overflow-hidden">
+            <img src="${spriteUrl(avatarId(u.avatar))}" alt="${u.avatar}"
+              class="w-20 h-20 object-contain drop-shadow-lg transition-transform group-hover:scale-110" />
+          </div>
+          <p class="font-bold">${u.name}</p>
+          <p class="text-slate-500 text-xs mt-0.5 capitalize">${u.avatar}</p>
+          <div class="mt-4 bg-red-500 group-hover:bg-red-400 text-white text-xs font-bold
+                      py-1.5 px-4 rounded-full transition-colors shadow-md shadow-red-900/40">
+            Open Pokédex →
+          </div>
+        </button>`).join('')}
+    </div>`;
+}
+
+/* ── Pokédex ──────────────────────────────────────────────────────────── */
+function tPokedex() {
+  if (S.loading) return tSpinner('Loading Pokédex…');
+  const { dex, user } = S;
+  if (!dex) return '';
+  return `
+    <div class="flex flex-col sm:flex-row sm:items-center gap-4 mb-8 animate-fade-up">
+      <div class="flex items-center gap-4">
+        <div class="w-16 h-16 rounded-full bg-slate-800 border border-slate-700 overflow-hidden
+                    flex items-center justify-center shrink-0">
+          <img src="${spriteUrl(avatarId(user.avatar))}" class="w-14 h-14 object-contain" alt="" />
+        </div>
+        <div>
+          <h1 class="text-2xl font-black tracking-tight">${user.name}'s Pokédex</h1>
+          <p class="text-slate-400 text-sm mt-0.5">
+            <span class="text-yellow-400 font-bold">${dex.total_caught}</span> Pokémon caught
+          </p>
+        </div>
+      </div>
+      <button data-action="open-catch"
+        class="sm:ml-auto inline-flex items-center gap-2 bg-red-500 hover:bg-red-400 text-white
+               font-bold py-2.5 px-5 rounded-xl transition-colors shadow-lg shadow-red-900/30">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"
+          stroke-linecap="round" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/>
+          <line x1="8" y1="12" x2="16" y2="12"/>
+        </svg>
+        Catch a Pokémon
+      </button>
+    </div>
+    ${dex.pokemons.length === 0
+      ? `<div class="text-center py-24 text-slate-500 animate-fade-up">
+           <p class="text-6xl mb-4">🔴</p>
+           <p class="font-semibold">No Pokémon caught yet!</p>
+           <p class="text-sm mt-1">Press "Catch a Pokémon" to start your collection.</p>
+         </div>`
+      : `<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+           ${dex.pokemons.map((p, i) => tCard(p, i)).join('')}
+         </div>`}`;
+}
+
+function tCard(p, i) {
+  return `
+  <div class="card bg-slate-800 border border-slate-700/80 rounded-2xl overflow-hidden group animate-fade-up"
+    style="animation-delay:${i * 40}ms">
+    <div class="relative bg-gradient-to-br from-slate-700/50 to-slate-800 flex items-center
+                justify-center h-36 overflow-hidden">
+      <span class="absolute text-[5.5rem] font-black text-white/[0.04] select-none leading-none">
+        #${pad3(p.pokemon_id)}
+      </span>
+      <img src="${artworkUrl(p.pokemon_id)}" alt="${p.pokemon_name}"
+        class="relative h-28 w-28 object-contain drop-shadow-2xl transition-transform group-hover:scale-110"
+        onerror="this.src='${spriteUrl(p.pokemon_id)}'" />
+      <span class="absolute top-2.5 right-2.5 bg-yellow-400 text-slate-900 text-xs font-black
+                   px-2 py-0.5 rounded-full shadow">Lv ${p.level}</span>
+    </div>
+    <div class="p-3.5">
+      <p class="font-bold text-sm leading-snug">${p.nickname || p.pokemon_name}</p>
+      <p class="text-slate-400 text-xs capitalize mt-0.5">
+        ${p.nickname ? p.pokemon_name + ' · ' : ''}#${pad3(p.pokemon_id)}
+      </p>
+      <p class="text-slate-500 text-xs mt-2 flex items-center gap-1">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+        ${fmtDate(p.caught_at)}
+      </p>
+      <div class="flex gap-2 mt-3">
+        <button data-action="open-detail" data-catch='${safeJson(p)}'
+          class="flex-1 bg-slate-700 hover:bg-blue-600/80 text-slate-300 hover:text-white
+                 text-xs font-semibold py-1.5 rounded-lg transition-colors">
+          Details
+        </button>
+        <button data-action="open-release" data-catch='${safeJson(p)}'
+          class="flex-1 border border-slate-600 hover:border-red-500/60 hover:bg-red-500/10
+                 text-slate-400 hover:text-red-400 text-xs font-semibold py-1.5 rounded-lg transition-colors">
+          Release
+        </button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ── Detail modal ─────────────────────────────────────────────────────── */
+function tDetailModal() {
+  const { detailCatch: c, detailData: d, detailSpecies: sp, detailLoading, detailError } = S;
+  if (!c) return '';
+
+  let body;
+  if (detailLoading) {
+    body = tSpinner('Loading Pokémon details…');
+  } else if (detailError) {
+    body = `
+      <div class="text-center py-10 text-slate-400">
+        <p class="text-5xl mb-4">⚠️</p>
+        <p class="text-sm font-medium">${detailError}</p>
+        <button data-action="retry-detail"
+          class="mt-5 bg-red-500 hover:bg-red-400 text-white text-sm font-bold px-5 py-2 rounded-xl transition-colors">
+          Retry
+        </button>
+      </div>`;
+  } else if (d && sp) {
+    // Clean up flavor text (form feeds, line breaks)
+    const desc = (sp.flavor_text_entries.find(e => e.language.name === 'en')?.flavor_text ?? '')
+      .replace(/[\f\n\r­]/g, ' ').replace(/\s+/g, ' ').trim();
+
+    const types     = d.types.map(t => typeBadge(t.type.name)).join('');
+    const abilities = d.abilities.map(a =>
+      `<span class="capitalize text-xs bg-slate-700 px-2.5 py-0.5 rounded-full">${a.ability.name}</span>`
+    ).join('');
+    const stats = d.stats.map(s => statBar(s.stat.name, s.base_stat)).join('');
+
+    body = `
+      <div class="flex flex-col sm:flex-row gap-6">
+        <!-- Left col: sprite + basics -->
+        <div class="flex flex-col items-center sm:w-44 shrink-0">
+          <img src="${artworkUrl(d.id)}" alt="${d.name}"
+            class="w-40 h-40 object-contain drop-shadow-2xl"
+            onerror="this.src='${spriteUrl(d.id)}'" />
+          <p class="text-slate-500 text-xs mt-2">#${pad3(d.id)}</p>
+          <h3 class="font-black text-xl capitalize">${d.name}</h3>
+          <div class="flex gap-1.5 flex-wrap justify-center mt-2">${types}</div>
+          ${c.nickname
+            ? `<p class="text-slate-400 text-xs mt-2">Nicknamed <span class="text-white font-bold">"${c.nickname}"</span></p>`
+            : ''}
+          <div class="flex gap-4 mt-3 text-xs text-slate-400">
+            <span>⚖ ${(d.weight / 10).toFixed(1)} kg</span>
+            <span>📏 ${(d.height / 10).toFixed(1)} m</span>
+          </div>
+          <div class="flex flex-wrap gap-1.5 mt-3 justify-center">${abilities}</div>
+        </div>
+        <!-- Right col: description + stats -->
+        <div class="flex-1 min-w-0">
+          ${desc ? `<p class="text-slate-300 text-sm leading-relaxed mb-5 italic border-l-2 border-slate-700 pl-3">"${desc}"</p>` : ''}
+          <h4 class="text-xs font-black uppercase tracking-widest text-slate-500 mb-3">Base Stats</h4>
+          <div class="space-y-2.5">${stats}</div>
+        </div>
+      </div>`;
+  } else {
+    body = '';
+  }
+
+  return `
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div data-action="close-modal" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg
+                max-h-[90vh] overflow-y-auto shadow-2xl animate-scale-in">
+      <div class="sticky top-0 bg-slate-800/95 backdrop-blur border-b border-slate-700
+                  px-6 py-4 flex items-center justify-between z-10">
+        <h2 class="font-black text-lg capitalize">${c.pokemon_name}</h2>
+        <button data-action="close-modal"
+          class="p-1 text-slate-500 hover:text-white rounded-lg hover:bg-slate-700 transition-colors">
+          <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" viewBox="0 0 24 24">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="p-6">${body}</div>
+    </div>
+  </div>`;
+}
+
+/* ── Catch modal ──────────────────────────────────────────────────────── */
+function tCatchModal() {
+  return `
+  <div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div data-action="close-modal" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-slate-800 border border-slate-700 rounded-t-2xl sm:rounded-2xl
+                w-full sm:max-w-md shadow-2xl animate-scale-in">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+        <h2 class="font-black text-lg">Catch a Pokémon!</h2>
+        <button data-action="close-modal"
+          class="p-1 text-slate-500 hover:text-white rounded-lg hover:bg-slate-700 transition-colors">
+          <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" viewBox="0 0 24 24">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="p-6">
+        <form id="catch-form" novalidate class="space-y-4">
+
+          <!-- Pokémon picker (autocomplete) -->
+          <div>
+            <label class="block text-sm font-semibold text-slate-300 mb-1.5">
+              Pokémon <span class="text-red-400">*</span>
+            </label>
+            <div class="relative">
+              <input id="catch-search" type="text" autocomplete="off" spellcheck="false"
+                placeholder="Start typing to search…"
+                oninput="handleSearch(this.value)"
+                onfocus="ensureCache()"
+                value="${catchSelected?.name ?? ''}"
+                class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-white
+                       placeholder-slate-600 outline-none focus:border-red-500 transition-all" />
+              <div id="search-dropdown"
+                class="hidden absolute z-10 w-full mt-1 bg-slate-800 border border-slate-700
+                       rounded-xl overflow-hidden shadow-2xl max-h-52 overflow-y-auto">
+              </div>
+            </div>
+          </div>
+
+          <!-- Sprite preview (shown after selection) -->
+          <div id="catch-preview" class="${catchSelected ? '' : 'hidden'} text-center">
+            ${catchSelected ? `
+              <img src="${artworkUrl(catchSelected.id)}" class="w-28 h-28 object-contain drop-shadow-2xl mx-auto"
+                onerror="this.src='${spriteUrl(catchSelected.id)}'" />
+              <p class="text-xs font-bold capitalize mt-1 text-slate-300">${catchSelected.name}</p>` : ''}
+          </div>
+
+          <!-- Nickname -->
+          <div>
+            <label class="block text-sm font-semibold text-slate-300 mb-1.5">Nickname</label>
+            <input name="nickname" autocomplete="off" placeholder="e.g. Sparky"
+              class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-white
+                     placeholder-slate-600 outline-none focus:border-red-500 transition-all" />
+          </div>
+
+          <!-- Level -->
+          <div>
+            <label class="block text-sm font-semibold text-slate-300 mb-1.5">
+              Level <span class="text-red-400">*</span>
+            </label>
+            <input name="level" type="number" min="1" max="100" value="5"
+              class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-white
+                     placeholder-slate-600 outline-none focus:border-red-500 transition-all" />
+          </div>
+
+          <div class="flex gap-3 pt-1">
+            <button type="button" data-action="close-modal"
+              class="flex-1 border border-slate-600 hover:border-slate-500 hover:bg-slate-700/40
+                     text-slate-300 font-semibold py-2.5 rounded-xl transition-colors">
+              Cancel
+            </button>
+            <button type="submit"
+              class="flex-1 bg-red-500 hover:bg-red-400 text-white font-bold py-2.5 rounded-xl
+                     transition-colors shadow-lg shadow-red-900/30
+                     ${S.catching ? 'opacity-60 pointer-events-none' : ''}">
+              ${S.catching ? '⏳ Catching…' : '🎯 Catch!'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ── Release confirmation ─────────────────────────────────────────────── */
+function tReleaseModal() {
+  const p = S.releaseTarget;
+  if (!p) return '';
+  return `
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div data-action="close-modal" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-sm
+                p-6 shadow-2xl animate-scale-in text-center">
+      <img src="${artworkUrl(p.pokemon_id)}" class="w-28 h-28 object-contain mx-auto drop-shadow-2xl mb-3"
+        onerror="this.src='${spriteUrl(p.pokemon_id)}'" />
+      <h2 class="font-black text-lg">Release ${p.nickname || p.pokemon_name}?</h2>
+      <p class="text-slate-400 text-sm mt-1 mb-6">
+        This Pokémon will leave your Pokédex forever.
+      </p>
+      <div class="flex gap-3">
+        <button data-action="close-modal"
+          class="flex-1 border border-slate-600 hover:border-slate-500 hover:bg-slate-700/40
+                 text-slate-300 font-semibold py-2.5 rounded-xl transition-colors">
+          Keep it
+        </button>
+        <button data-action="confirm-release" data-catch-id="${p.id}"
+          class="flex-1 bg-red-500 hover:bg-red-400 text-white font-bold py-2.5 rounded-xl
+                 transition-colors ${S.releasing ? 'opacity-60 pointer-events-none' : ''}">
+          ${S.releasing ? '⏳ Releasing…' : '↩ Release'}
+        </button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ─── Root render ───────────────────────────────────────────────────────── */
+function render() {
+  document.getElementById('app').innerHTML = `
+    ${tHeader()}
+    <main class="max-w-5xl mx-auto px-4 py-8">
+      ${tError()}
+      ${S.view === 'home' ? tHome() : tPokedex()}
+    </main>
+    ${S.modal === 'detail'  ? tDetailModal()  : ''}
+    ${S.modal === 'catch'   ? tCatchModal()   : ''}
+    ${S.modal === 'release' ? tReleaseModal() : ''}`;
+
+  attachEvents();
+
+  // Animate stat bars: start at 0, then expand after paint
+  requestAnimationFrame(() => {
+    document.querySelectorAll('[data-w]').forEach(el => {
+      el.style.width = el.dataset.w + '%';
+    });
+  });
+}
+
+/* ─── Event delegation ──────────────────────────────────────────────────── */
+function attachEvents() {
+  document.body.onclick = e => {
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    switch (el.dataset.action) {
+      case 'back':
+        set({ view:'home', user:null, dex:null, error:null });
+        break;
+      case 'select-user':
+        loadDex(S.users.find(u => u.id === el.dataset.uid));
+        break;
+      case 'open-catch':
+        catchSelected = null;
+        set({ modal:'catch', error:null });
+        break;
+      case 'open-detail':
+        loadDetail(JSON.parse(el.dataset.catch));
+        break;
+      case 'open-release':
+        set({ modal:'release', releaseTarget: JSON.parse(el.dataset.catch) });
+        break;
+      case 'confirm-release':
+        doRelease(el.dataset.catchId);
+        break;
+      case 'retry-detail':
+        if (S.detailCatch) loadDetail(S.detailCatch);
+        break;
+      case 'close-modal':
+        if (!S.catching && !S.releasing) set({ modal:null, releaseTarget:null });
+        break;
+      case 'dismiss-error':
+        set({ error:null });
+        break;
+    }
+  };
+
+  const form = document.getElementById('catch-form');
+  if (form) {
+    form.onsubmit = e => {
+      e.preventDefault();
+      if (!catchSelected) {
+        document.getElementById('catch-search')?.focus();
+        return;
+      }
+      const d = Object.fromEntries(new FormData(form));
+      if (!d.level || +d.level < 1 || +d.level > 100) return;
+      doCatch({ pokemon_name: catchSelected.name, nickname: d.nickname, level: d.level });
+    };
+  }
+}
+
+/* ─── Boot ──────────────────────────────────────────────────────────────── */
+loadUsers();
+ensureCache(); // pre-warm the pokémon list in background
+</script>
+</body>
+</html>
