@@ -17,6 +17,8 @@ This project follows an **API-first design** approach:
 The backend business logic does NOT exist yet — it will be coded later.
 User-specific data in this demo runs against the Postman Mock Server.
 
+The "ui" folder at the root project level is a save for the phase 3 and 4 in case we want to skip them and move forward, don't change anything in it unless I ask you to.
+
 ## Tools & MCP rules
 - Always use the Postman MCP tools for any Postman operation
 - Never create Postman resources via direct API calls or manual UI clicks
