@@ -31,18 +31,35 @@ When building collection requests or saved examples via MCP, **never** use the U
 object form with a `host` array when the host is a `{{variable}}`. The `host`
 array cannot hold a variable reference and renders as `[object Object]` in the UI.
 
+Also **never** include a `path` array in the URL object without a `host`. Without
+`host`, Postman reconstructs the display URL from `path` only and drops the
+`{{base_url}}` prefix entirely, showing just `/pokemon/:name` in the UI.
+
 **Always use these forms instead:**
 
-Collection request URL (object without `host`):
+`createCollection` request URL — **plain string only**. The MCP tool schema has
+`additionalProperties: false` on the URL object and does not include a `variable`
+field; passing `{"raw": "...", "variable": [...]}` causes the entire URL to be
+silently dropped (the request renders with an empty URL bar in the UI):
 ```json
-{ "raw": "{{baseUrl}}/users/:user_id/pokedex",
-  "path": ["users", ":user_id", "pokedex"],
-  "variable": [{ "key": "user_id", "value": "user_001" }] }
+"url": "{{base_url}}/users/:user_id/pokedex"
 ```
+
+`updateCollectionRequest` URL — plain string only (the tool does not accept a URL object):
+```json
+"url": "{{base_url}}/users/:user_id/pokedex"
+```
+Note: neither tool supports setting path variable default values via the URL field.
+If defaults are needed, they must be set manually in the UI.
+
+**Post-creation verification (required):** After every `createCollection` call,
+immediately call `getCollection` (model=minimal) and confirm that each request
+has a non-empty URL. If any URL is missing, fix it at once with
+`updateCollectionRequest` before moving on.
 
 Saved example `requestObject` (plain string URL — no URL object):
 ```json
-{ "method": "GET", "url": "{{baseUrl}}/users/user_001/pokedex", "header": [] }
+{ "method": "GET", "url": "{{base_url}}/users/user_001/pokedex", "header": [] }
 ```
 
 ## Postman workspace structure
@@ -62,12 +79,27 @@ Base URL: https://pokeapi.co/api/v2
 
 Always read the spec before creating any request.
 
-Endpoints to create in the `PokéAPI Data` collection:
-- `GET /pokemon/{name}`   → stats, types, abilities, sprites (example: pikachu)
-- `GET /type/{name}`      → type damage relations (example: electric)
-- `GET /move/{name}`      → move power, accuracy, damage class (example: thunderbolt)
+### Collection variable (required)
+The `PokéAPI Data` collection **must** define a collection-level variable:
+- Key: `base_url`
+- Value: `https://pokeapi.co/api/v2`
 
-Tests on every request:
+### Endpoints to create in the `PokéAPI Data` collection
+All request URLs **must** use `{{base_url}}` as the host and Postman path variables
+(`:name` syntax) for the dynamic segment — never hardcode the base URL or inline
+the example value in the path string.
+
+URL format to follow (`raw` + `variable` only — no `host`, no `path` array):
+```json
+{ "raw": "{{base_url}}/pokemon/:name",
+  "variable": [{ "key": "name", "value": "pikachu" }] }
+```
+
+- `GET {{base_url}}/pokemon/:name`  → stats, types, abilities, sprites (`:name` default: `pikachu`)
+- `GET {{base_url}}/type/:name`     → type damage relations (`:name` default: `electric`)
+- `GET {{base_url}}/move/:name`     → move power, accuracy, damage class (`:name` default: `thunderbolt`)
+
+### Tests on every request
 - Status code is 200
 - Response body contains a `name` field
 
