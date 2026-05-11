@@ -26,6 +26,25 @@ The "ui" folder at the root project level is a save for the phase 3 and 4 in cas
 - The Pokédex business logic (catching, persistence, auth) is out of scope —
   use mock responses only
 
+## Postman Collection URL format (critical)
+When building collection requests or saved examples via MCP, **never** use the URL
+object form with a `host` array when the host is a `{{variable}}`. The `host`
+array cannot hold a variable reference and renders as `[object Object]` in the UI.
+
+**Always use these forms instead:**
+
+Collection request URL (object without `host`):
+```json
+{ "raw": "{{baseUrl}}/users/:user_id/pokedex",
+  "path": ["users", ":user_id", "pokedex"],
+  "variable": [{ "key": "user_id", "value": "user_001" }] }
+```
+
+Saved example `requestObject` (plain string URL — no URL object):
+```json
+{ "method": "GET", "url": "{{baseUrl}}/users/user_001/pokedex", "header": [] }
+```
+
 ## Postman workspace structure
 - Workspace name: `PokéDex`
 - Collections:
@@ -57,6 +76,7 @@ Tests on every request:
 ## Phase 2 — PokéDex API contract (our own API, mocked)
 
 This is the API my frontend will consume. The backend will be implemented later.
+Ensure that mocked examples are working out of the box when you generate them.
 
 ### Resource: User
 A registered child using the app.
